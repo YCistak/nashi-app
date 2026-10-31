@@ -40,6 +40,17 @@ int main(void) {
   CHECK(wheel_hit_test(&m, cx, cy, cx + rm, cy) == 1);
   CHECK(wheel_hit_test(&m, cx, cy, cx - rm, cy) == 3);
 
+  /* Three slices start at the left, like WheelGeometry.startAngle. */
+  CHECK(wheel_demo_model("actions", 540, &m));
+  m.n_slices = 3;
+  CHECK(wheel_hit_test(&m, cx, cy, cx - rm, cy) == 0);
+  CHECK(wheel_hit_test(&m, cx, cy, cx + rm * 0.5, cy - rm * 0.8660254) == 1);
+  CHECK(wheel_hit_test(&m, cx, cy, cx + rm * 0.5, cy + rm * 0.8660254) == 2);
+
+  /* The ring ratios match the macOS wheel. */
+  CHECK(fabs(wheel_outer_radius(320) - 140.8) < 1e-9);
+  CHECK(fabs(wheel_inner_radius(320) / wheel_outer_radius(320) - 0.407) < 1e-9);
+
   if (failures) return 1;
   puts("geometry: all checks passed");
   return 0;

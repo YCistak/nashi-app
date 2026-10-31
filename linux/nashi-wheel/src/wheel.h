@@ -14,6 +14,7 @@
 typedef struct {
   const char *id;     /* stable identifier reported to the app */
   const char *label;  /* short text drawn on the slice */
+  const char *icon;   /* freedesktop icon name, or NULL for a text-only slice */
 } WheelSlice;
 
 typedef struct {
@@ -28,7 +29,8 @@ typedef struct {
   int hot;        /* slice index, or a WHEEL_HIT_* value */
 } WheelView;
 
-/* Ring radii derived from the wheel size. */
+/* Ring radii derived from the wheel size (same ratios as the macOS app:
+ * outer = 0.44 * size, inner = 0.407 * outer). */
 double wheel_outer_radius(double size);
 double wheel_inner_radius(double size);
 
@@ -36,6 +38,10 @@ double wheel_inner_radius(double size);
  * the slice in that direction selected, up to 1.6x the outer radius. */
 int wheel_hit_test(const WheelModel *model, double cx, double cy,
                    double px, double py);
+
+/* Centre direction of slice i, in degrees clockwise from the top. The macOS
+ * wheel starts at the top, except a three-slice wheel which starts at the left. */
+double wheel_slice_center_deg(int n_slices, int index);
 
 /* Fills a demo model; returns FALSE for an unknown mode. */
 gboolean wheel_demo_model(const char *mode, double size, WheelModel *out);
