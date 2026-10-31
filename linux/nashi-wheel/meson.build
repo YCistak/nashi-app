@@ -29,3 +29,9 @@ foreach mode : ['convert', 'tools', 'actions']
     depends : wheel_exe,
     env : {'WAYLAND_DISPLAY': '', 'DISPLAY': ''})
 endforeach
+
+# Pixel checks: gold petal stays inside the ring, ring contrasts in both themes.
+render_test = executable('test-render', 'tests/test_render.c',
+  dependencies : [gtk, m, wheel_dep])
+test('render-bounds', render_test,
+  env : {'WAYLAND_DISPLAY': '', 'DISPLAY': ''})

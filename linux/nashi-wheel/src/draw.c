@@ -84,14 +84,21 @@ gboolean wheel_demo_model(const char *mode, double size, WheelModel *out) {
  * controlBackgroundColor / labelColor in the light and dark appearances. */
 typedef struct {
   double backdrop[4], petal[4], disc[3], label[4], edge[4];
+  double rim[4];  /* hairline on the backdrop's outer edge */
 } Palette;
 
 static const Palette LIGHT = {
   .backdrop = {0.89, 0.89, 0.89, 0.86}, .petal = {0.99, 0.99, 0.99, 0.88},
-  .disc = {1, 1, 1}, .label = {0, 0, 0, 0.85}, .edge = {0.5, 0.5, 0.5, 0.24} };
+  .disc = {1, 1, 1}, .label = {0, 0, 0, 0.85}, .edge = {0.5, 0.5, 0.5, 0.24},
+  .rim = {0.5, 0.5, 0.5, 0.17} };
+/* In the dark palette the backdrop used to be almost the colour of the petals
+ * and of a dark desktop, so the outer ring did not read as a ring: the gold
+ * petal looked like it reached the wheel's edge. The ring is lighter and
+ * more opaque and gets a light hairline; the petal geometry is unchanged. */
 static const Palette DARK = {
-  .backdrop = {0.17, 0.17, 0.18, 0.86}, .petal = {0.13, 0.13, 0.14, 0.88},
-  .disc = {0.12, 0.12, 0.13}, .label = {1, 1, 1, 0.85}, .edge = {0.5, 0.5, 0.5, 0.24} };
+  .backdrop = {0.28, 0.28, 0.30, 0.94}, .petal = {0.13, 0.13, 0.14, 0.88},
+  .disc = {0.12, 0.12, 0.13}, .label = {1, 1, 1, 0.85}, .edge = {0.5, 0.5, 0.5, 0.24},
+  .rim = {1, 1, 1, 0.16} };
 
 /* NashiArtwork.gold / goldEnd / ink */
 static const double GOLD[3] = {0.89, 0.72, 0.35};
@@ -160,12 +167,12 @@ static void petal_path(cairo_t *cr, const Rings *g, int n, int index) {
 }
 
 /* ---- labels -------------------------------------------------------------- */
-static PangoLayout *make_layout(cairo_t *cr, const char *family, double px,
-                                const char *text, double max_w) {
+static PangoLayout *make_layout(cairo_t *cr, const char *family, PangoWeight weight,
+                                double px, const char *text, double max_w) {
   PangoLayout *l = pango_cairo_create_layout(cr);
   PangoFontDescription *fd = pango_font_description_new();
   pango_font_description_set_family(fd, family);
-  pango_font_description_set_weight(fd, PANGO_WEIGHT_SEMIBOLD);
+  pango_font_description_set_weight(fd, weight);
   pango_font_description_set_absolute_size(fd, px * PANGO_SCALE);
   pango_layout_set_font_description(l, fd);
   pango_font_description_free(fd);
@@ -241,7 +248,7 @@ static void draw_slice_label(cairo_t *cr, const Rings *g, int n, int index,
   petal_path(cr, g, n, index);  /* current path = fit region for cairo_in_fill */
   for (double red = 0; red <= 3 * sc + 1e-9; red += 0.25 * sc) {
     double px = fmax(6 * sc, base - red);
-    PangoLayout *l = make_layout(cr, "Nunito, Sans", px, title, 84 * sc);
+    PangoLayout *l = make_layout(cr, "Nunito, Sans", PANGO_WEIGHT_BOLD, px, title, 84 * sc);
     PangoRectangle ink, logical;
     pango_layout_get_pixel_extents(l, &ink, &logical);
     double tw = logical.width, th = logical.height;
@@ -289,9 +296,10 @@ static void draw_slice_label(cairo_t *cr, const Rings *g, int n, int index,
 
 static void draw_center_title(cairo_t *cr, const Rings *g, const char *text,
                               double rad_max, const double rgb[3], double alpha) {
-  /* Wheel.swift: 11pt semibold system font, max width inner*2 - 16*scale. */
+  /* Wheel.swift: 11pt semibold system font. Inter is wider than SF at the same
+   * size, so it is drawn at 10.5 to match the macOS look. Max width inner*2 - 16*scale. */
   double sc = g->scale;
-  PangoLayout *l = make_layout(cr, "Inter, Sans", 11 * sc, text, fmin(rad_max, 2 * g->r_in - 16 * sc));
+  PangoLayout *l = make_layout(cr, "Inter, Sans", PANGO_WEIGHT_SEMIBOLD, 10.5 * sc, text, fmin(rad_max, 2 * g->r_in - 16 * sc));
   int w, h;
   pango_layout_get_pixel_size(l, &w, &h);
   cairo_set_source_rgba(cr, rgb[0], rgb[1], rgb[2], alpha);
@@ -333,7 +341,7 @@ void wheel_draw(cairo_t *cr, const WheelModel *model, const WheelView *view) {
   cairo_arc(cr, g.cx, g.cy, r_back, 0, 2 * M_PI);
   cairo_set_source_rgba(cr, pal->backdrop[0], pal->backdrop[1], pal->backdrop[2], pal->backdrop[3]);
   cairo_fill_preserve(cr);
-  cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.17);
+  cairo_set_source_rgba(cr, pal->rim[0], pal->rim[1], pal->rim[2], pal->rim[3]);
   cairo_set_line_width(cr, 0.7);
   cairo_stroke(cr);
 
