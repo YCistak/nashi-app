@@ -1,4 +1,6 @@
-/* nashi-wheel: Linux drag wheel overlay (A2 skeleton + A3 drop target). */
+/* nashi-wheel: Linux drag wheel overlay (A2 skeleton, A3 drop target,
+ * A4 Hyprland drag trigger). */
+#include "hypr.h"
 #include "surface.h"
 #include "uris.h"
 #include "wheel.h"
@@ -256,6 +258,7 @@ static gboolean on_delete(GtkWidget *w, GdkEvent *e, gpointer data) {
 
 static void usage(const char *argv0) {
   g_printerr("Usage: %s --demo [convert|tools|actions] [--size PX] [--no-keyboard|--drag] [--at X,Y]\n"
+             "       %s --hypr-trigger\n"
              "       %s --render-png FILE [--mode M] [--highlight N|none] [--size PX] [--theme light|dark]\n"
              "  --demo MODE     show a demo wheel with fixed slices (default: convert)\n"
              "  --size PX       wheel diameter in px (default %.0f)\n"
@@ -269,8 +272,12 @@ static void usage(const char *argv0) {
              "                  to the output the overlay is on) instead of at the first pointer\n"
              "                  event. GTK3 on Wayland reports the pointer only on the first\n"
              "                  motion, so a launcher that knows the cursor should pass it.\n"
+             "  --hypr-trigger  Hyprland 0.56.x only: install a runtime Lua hook so that pressing\n"
+             "                  Shift/Ctrl/Alt while dragging opens the convert/tools/actions\n"
+             "                  wheel at the cursor. Runs until SIGTERM, then removes the hook.\n"
+             "                  Exits with 3 (doing nothing) outside Hyprland or on other versions.\n"
              "Env: NASHI_WHEEL_NO_LAYER=1 forces the plain-window fallback.\n",
-             argv0, argv0, DEFAULT_SIZE);
+             argv0, argv0, argv0, DEFAULT_SIZE);
 }
 
 /* Headless render: draws with the cairo core into an image surface and writes a
@@ -310,6 +317,14 @@ int main(int argc, char **argv) {
   double size = DEFAULT_SIZE;
   gboolean keyboard = TRUE, drag = FALSE;
   const char *at = NULL;
+
+  if (argc == 2 && g_str_equal(argv[1], "--hypr-trigger")) {
+    /* Start wheels with the same binary, wherever it is installed. */
+    char *self = g_file_read_link("/proc/self/exe", NULL);
+    int rc = hypr_trigger_run(self ? self : argv[0]);
+    g_free(self);
+    return rc;
+  }
 
   /* Parse our own flags before GTK sees them. */
   for (int i = 1; i < argc; i++) {
