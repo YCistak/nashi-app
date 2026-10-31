@@ -14,6 +14,8 @@ typedef struct {
   GtkWidget *area;
   GtkWindow *win;
   gboolean placed;  /* wheel centre already moved to the pointer */
+  gboolean at_given; /* centre came from --at, not from a pointer event */
+  double at_x, at_y; /* requested --at point, kept to re-clamp on every resize */
   int exit_code;
   GdkAtom uri_atom;  /* text/uri-list */
   int drop_hit;      /* hit-test result at the drop position */
@@ -34,9 +36,26 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
   return FALSE;
 }
 
+/* Keeps the whole wheel on screen near an edge (like the macOS panel); on a
+ * surface too small for the wheel the centre of the surface is used. */
+static double clamp_centre(double v, int extent, double size) {
+  double margin = wheel_outer_radius(size) + 12.0;
+  if (extent < 2 * margin)
+    return extent / 2.0;
+  return CLAMP(v, margin, extent - margin);
+}
+
 static void on_size_allocate(GtkWidget *w, GdkRectangle *r, gpointer data) {
   (void)w;
   App *app = data;
+  if (app->placed && app->at_given) {
+    /* --at is clamped to the surface the compositor actually gave us. The
+     * first allocation can be a provisional size before the layer surface is
+     * configured, so always clamp the original request, not the last result.
+     * Selection is by angle, so a shifted centre still works for the drag. */
+    app->view.cx = clamp_centre(app->at_x, r->width, app->model.size);
+    app->view.cy = clamp_centre(app->at_y, r->height, app->model.size);
+  }
   if (!app->placed) {  /* until the pointer is known, centre on the surface */
     app->view.cx = r->width / 2.0;
     app->view.cy = r->height / 2.0;
@@ -210,7 +229,7 @@ static gboolean on_delete(GtkWidget *w, GdkEvent *e, gpointer data) {
 }
 
 static void usage(const char *argv0) {
-  g_printerr("Usage: %s --demo [convert|tools|actions] [--size PX] [--no-keyboard|--drag]\n"
+  g_printerr("Usage: %s --demo [convert|tools|actions] [--size PX] [--no-keyboard|--drag] [--at X,Y]\n"
              "       %s --render-png FILE [--mode M] [--highlight N|none] [--size PX] [--theme light|dark]\n"
              "  --demo MODE     show a demo wheel with fixed slices (default: convert)\n"
              "  --size PX       wheel diameter in px (default %.0f)\n"
@@ -218,6 +237,10 @@ static void usage(const char *argv0) {
              "  --drag          drag-session mode: same as --no-keyboard (the drag source owns\n"
              "                  the keyboard). A text/uri-list drop prints {\"t\":\"drop\",...} or\n"
              "                  {\"t\":\"cancel\"} and exits.\n"
+             "  --at X,Y        open the wheel centred at X,Y (surface coordinates, i.e. relative\n"
+             "                  to the output the overlay is on) instead of at the first pointer\n"
+             "                  event. GTK3 on Wayland reports the pointer only on the first\n"
+             "                  motion, so a launcher that knows the cursor should pass it.\n"
              "Env: NASHI_WHEEL_NO_LAYER=1 forces the plain-window fallback.\n",
              argv0, argv0, DEFAULT_SIZE);
 }
@@ -258,6 +281,7 @@ int main(int argc, char **argv) {
   const char *png = NULL, *render_mode = "convert", *highlight = "none", *theme = NULL;
   double size = DEFAULT_SIZE;
   gboolean keyboard = TRUE;
+  const char *at = NULL;
 
   /* Parse our own flags before GTK sees them. */
   for (int i = 1; i < argc; i++) {
@@ -273,6 +297,8 @@ int main(int argc, char **argv) {
       highlight = argv[++i];
     } else if (g_str_equal(argv[i], "--theme") && i + 1 < argc) {
       theme = argv[++i];
+    } else if (g_str_equal(argv[i], "--at") && i + 1 < argc) {
+      at = argv[++i];
     } else if (g_str_equal(argv[i], "--no-keyboard") || g_str_equal(argv[i], "--drag")) {
       keyboard = FALSE;
     } else {
@@ -288,6 +314,15 @@ int main(int argc, char **argv) {
   }
 
   App app = { .view = { .hot = WHEEL_HIT_CENTER }, .drop_hit = WHEEL_HIT_CENTER };
+  if (at) {
+    if (!wheel_parse_point(at, &app.at_x, &app.at_y)) {
+      g_printerr("nashi-wheel: --at expects X,Y (non-negative numbers), got '%s'\n", at);
+      return 2;
+    }
+    app.view.cx = app.at_x;
+    app.view.cy = app.at_y;
+    app.placed = app.at_given = TRUE;
+  }
   if (!wheel_demo_model(demo_mode, size, &app.model)) {
     g_printerr("nashi-wheel: unknown mode '%s'\n", demo_mode);
     return 2;

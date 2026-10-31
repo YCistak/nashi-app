@@ -64,6 +64,24 @@ static const struct {
                     {"share", "Share", "send-to-symbolic"} } },
 };
 
+gboolean wheel_parse_point(const char *text, double *x, double *y) {
+  if (!text)
+    return FALSE;
+  char *end = NULL;
+  double px = g_ascii_strtod(text, &end);
+  if (end == text || *end != ',')
+    return FALSE;
+  const char *rest = end + 1;
+  double py = g_ascii_strtod(rest, &end);
+  if (end == rest || *end != '\0')
+    return FALSE;
+  if (!isfinite(px) || !isfinite(py) || px < 0 || py < 0 || px > 100000 || py > 100000)
+    return FALSE;
+  *x = px;
+  *y = py;
+  return TRUE;
+}
+
 gboolean wheel_demo_model(const char *mode, double size, WheelModel *out) {
   for (guint i = 0; i < G_N_ELEMENTS(DEMO); i++) {
     if (strcmp(DEMO[i].mode, mode) != 0)

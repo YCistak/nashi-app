@@ -43,6 +43,10 @@ int wheel_hit_test(const WheelModel *model, double cx, double cy,
  * wheel starts at the top, except a three-slice wheel which starts at the left. */
 double wheel_slice_center_deg(int n_slices, int index);
 
+/* Parses "X,Y" (surface coordinates, non-negative, finite). Returns FALSE for
+ * anything else and leaves x/y untouched. */
+gboolean wheel_parse_point(const char *text, double *x, double *y);
+
 /* Fills a demo model; returns FALSE for an unknown mode. */
 gboolean wheel_demo_model(const char *mode, double size, WheelModel *out);
 

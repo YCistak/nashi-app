@@ -51,6 +51,21 @@ int main(void) {
   CHECK(fabs(wheel_outer_radius(320) - 140.8) < 1e-9);
   CHECK(fabs(wheel_inner_radius(320) / wheel_outer_radius(320) - 0.407) < 1e-9);
 
+  /* --at X,Y parsing. */
+  double px = -1, py = -1;
+  CHECK(wheel_parse_point("400,300", &px, &py) && px == 400 && py == 300);
+  CHECK(wheel_parse_point("12.5,0", &px, &py) && px == 12.5 && py == 0);
+  px = py = -7;
+  CHECK(!wheel_parse_point("400", &px, &py));
+  CHECK(!wheel_parse_point("400,", &px, &py));
+  CHECK(!wheel_parse_point(",300", &px, &py));
+  CHECK(!wheel_parse_point("400,300x", &px, &py));
+  CHECK(!wheel_parse_point("-1,5", &px, &py));
+  CHECK(!wheel_parse_point("nan,5", &px, &py));
+  CHECK(!wheel_parse_point("", &px, &py));
+  CHECK(!wheel_parse_point(NULL, &px, &py));
+  CHECK(px == -7 && py == -7);
+
   if (failures) return 1;
   puts("geometry: all checks passed");
   return 0;
