@@ -17,6 +17,7 @@ typedef struct {
   int exit_code;
   GdkAtom uri_atom;  /* text/uri-list */
   int drop_hit;      /* hit-test result at the drop position */
+  guint leave_timer; /* pending "drag ended without a drop" check */
 } App;
 
 static void app_set_hot(App *app, int hot) {
@@ -103,6 +104,11 @@ static gboolean on_drag_motion(GtkWidget *w, GdkDragContext *ctx, gint x, gint y
     gdk_drag_status(ctx, 0, time);  /* not a file list: refuse */
     return FALSE;
   }
+  g_debug("drag-motion %d,%d placed=%d", x, y, app->placed);
+  if (app->leave_timer) {
+    g_source_remove(app->leave_timer);
+    app->leave_timer = 0;
+  }
   on_pointer(app, x, y);
   /* Accept everywhere on the surface so that a drop over the centre still
    * arrives and is reported as "cancel" (a refused drop would make the source
@@ -112,16 +118,34 @@ static gboolean on_drag_motion(GtkWidget *w, GdkDragContext *ctx, gint x, gint y
   return TRUE;
 }
 
+static gboolean on_leave_timeout(gpointer data) {
+  App *app = data;
+  app->leave_timer = 0;
+  /* No drop followed the leave: the source cancelled (Esc) or died, or the
+   * pointer went to another output. Nothing to wait for any more. */
+  print_line(uris_cancel_json());
+  gtk_main_quit();
+  return G_SOURCE_REMOVE;
+}
+
 static void on_drag_leave(GtkWidget *w, GdkDragContext *ctx, guint time, gpointer data) {
   (void)w; (void)ctx; (void)time;
-  /* Also fires just before a drop, so it must not end the session; only the
-   * highlight is cleared. */
-  app_set_hot(data, WHEEL_HIT_CENTER);
+  App *app = data;
+  app_set_hot(app, WHEEL_HIT_CENTER);
+  /* GTK also emits drag-leave right before drag-drop, so a leave alone does
+   * not end the session: give a drop 200 ms to follow. */
+  if (!app->leave_timer)
+    app->leave_timer = g_timeout_add(200, on_leave_timeout, app);
 }
 
 static gboolean on_drag_drop(GtkWidget *w, GdkDragContext *ctx, gint x, gint y,
                              guint time, gpointer data) {
   App *app = data;
+  g_debug("drag-drop %d,%d", x, y);
+  if (app->leave_timer) {
+    g_source_remove(app->leave_timer);
+    app->leave_timer = 0;
+  }
   if (gtk_drag_dest_find_target(w, ctx, NULL) == GDK_NONE)
     return FALSE;
   /* The drop position decides the slice; the URIs arrive asynchronously. */
