@@ -7,7 +7,7 @@ gtk = dependency('gtk+-3.0')
 layer_shell = dependency('gtk-layer-shell-0')
 m = meson.get_compiler('c').find_library('m', required : false)
 
-wheel_lib = static_library('wheel-core', 'src/draw.c',
+wheel_lib = static_library('wheel-core', ['src/draw.c', 'src/uris.c'],
   dependencies : [gtk, m])
 wheel_dep = declare_dependency(link_with : wheel_lib,
   include_directories : include_directories('src'))
@@ -35,3 +35,8 @@ render_test = executable('test-render', 'tests/test_render.c',
   dependencies : [gtk, m, wheel_dep])
 test('render-bounds', render_test,
   env : {'WAYLAND_DISPLAY': '', 'DISPLAY': ''})
+
+# URI list parsing and JSON output.
+uris_test = executable('test-uris', 'tests/test_uris.c',
+  dependencies : [gtk, m, wheel_dep])
+test('uris', uris_test)
