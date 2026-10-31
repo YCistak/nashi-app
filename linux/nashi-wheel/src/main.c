@@ -1,5 +1,6 @@
-/* nashi-wheel: Linux drag wheel overlay (step A2: skeleton with --demo mode). */
+/* nashi-wheel: Linux drag wheel overlay (A2 skeleton + A3 drop target). */
 #include "surface.h"
+#include "uris.h"
 #include "wheel.h"
 
 #include <glib-unix.h>
@@ -14,6 +15,8 @@ typedef struct {
   GtkWindow *win;
   gboolean placed;  /* wheel centre already moved to the pointer */
   int exit_code;
+  GdkAtom uri_atom;  /* text/uri-list */
+  int drop_hit;      /* hit-test result at the drop position */
 } App;
 
 static void app_set_hot(App *app, int hot) {
@@ -81,6 +84,84 @@ static gboolean on_button(GtkWidget *w, GdkEventButton *e, gpointer data) {
   return TRUE;
 }
 
+/* ---- drag and drop (A3) ---------------------------------------------------
+ * The surface is a text/uri-list drop target. The first drag-motion places the
+ * wheel under the pointer (a compositor may not send a motion after the enter
+ * for a still pointer; until then the wheel stays centred on the surface).
+ * Later motions only update the highlight. A drop reports the slice under the
+ * pointer, or "cancel" over the centre / outside the wheel, and exits. */
+static void print_line(char *json) {
+  printf("%s\n", json);
+  fflush(stdout);
+  g_free(json);
+}
+
+static gboolean on_drag_motion(GtkWidget *w, GdkDragContext *ctx, gint x, gint y,
+                               guint time, gpointer data) {
+  App *app = data;
+  if (gtk_drag_dest_find_target(w, ctx, NULL) == GDK_NONE) {
+    gdk_drag_status(ctx, 0, time);  /* not a file list: refuse */
+    return FALSE;
+  }
+  on_pointer(app, x, y);
+  /* Accept everywhere on the surface so that a drop over the centre still
+   * arrives and is reported as "cancel" (a refused drop would make the source
+   * play its "snap back" animation instead). */
+  GdkDragAction act = gdk_drag_context_get_suggested_action(ctx);
+  gdk_drag_status(ctx, act ? act : GDK_ACTION_COPY, time);
+  return TRUE;
+}
+
+static void on_drag_leave(GtkWidget *w, GdkDragContext *ctx, guint time, gpointer data) {
+  (void)w; (void)ctx; (void)time;
+  /* Also fires just before a drop, so it must not end the session; only the
+   * highlight is cleared. */
+  app_set_hot(data, WHEEL_HIT_CENTER);
+}
+
+static gboolean on_drag_drop(GtkWidget *w, GdkDragContext *ctx, gint x, gint y,
+                             guint time, gpointer data) {
+  App *app = data;
+  if (gtk_drag_dest_find_target(w, ctx, NULL) == GDK_NONE)
+    return FALSE;
+  /* The drop position decides the slice; the URIs arrive asynchronously. */
+  app->drop_hit = app->placed
+      ? wheel_hit_test(&app->model, app->view.cx, app->view.cy, x, y)
+      : WHEEL_HIT_CENTER;
+  gtk_drag_get_data(w, ctx, app->uri_atom, time);
+  return TRUE;
+}
+
+static gboolean quit_idle(gpointer data) {
+  (void)data;
+  gtk_main_quit();
+  return G_SOURCE_REMOVE;
+}
+
+static void on_drag_data(GtkWidget *w, GdkDragContext *ctx, gint x, gint y,
+                         GtkSelectionData *sel, guint info, guint time, gpointer data) {
+  (void)w; (void)x; (void)y; (void)info;
+  App *app = data;
+  gint len = gtk_selection_data_get_length(sel);
+  if (len < 0) {  /* the source could not deliver the data */
+    gtk_drag_finish(ctx, FALSE, FALSE, time);
+    print_line(uris_cancel_json());
+    g_idle_add(quit_idle, NULL);
+    return;
+  }
+  char **uris = uris_parse_list((const char *)gtk_selection_data_get_data(sel), (gsize)len);
+  int hit = app->drop_hit;
+  gboolean on_slice = hit >= 0 && hit < app->model.n_slices && uris[0];
+  if (on_slice)
+    print_line(uris_drop_json(app->model.mode, app->model.slices[hit].id, uris));
+  else
+    print_line(uris_cancel_json());
+  g_strfreev(uris);
+  gtk_drag_finish(ctx, on_slice, FALSE, time);
+  gdk_display_flush(gdk_display_get_default());
+  g_idle_add(quit_idle, NULL);  /* let the finish reach the source first */
+}
+
 static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
   (void)w; (void)data;
   if (e->keyval == GDK_KEY_Escape) {
@@ -105,11 +186,14 @@ static gboolean on_delete(GtkWidget *w, GdkEvent *e, gpointer data) {
 }
 
 static void usage(const char *argv0) {
-  g_printerr("Usage: %s --demo [convert|tools|actions] [--size PX] [--no-keyboard]\n"
+  g_printerr("Usage: %s --demo [convert|tools|actions] [--size PX] [--no-keyboard|--drag]\n"
              "       %s --render-png FILE [--mode M] [--highlight N|none] [--size PX] [--theme light|dark]\n"
              "  --demo MODE     show a demo wheel with fixed slices (default: convert)\n"
              "  --size PX       wheel diameter in px (default %.0f)\n"
              "  --no-keyboard   do not take keyboard focus (as while dragging)\n"
+             "  --drag          drag-session mode: same as --no-keyboard (the drag source owns\n"
+             "                  the keyboard). A text/uri-list drop prints {\"t\":\"drop\",...} or\n"
+             "                  {\"t\":\"cancel\"} and exits.\n"
              "Env: NASHI_WHEEL_NO_LAYER=1 forces the plain-window fallback.\n",
              argv0, argv0, DEFAULT_SIZE);
 }
@@ -165,7 +249,7 @@ int main(int argc, char **argv) {
       highlight = argv[++i];
     } else if (g_str_equal(argv[i], "--theme") && i + 1 < argc) {
       theme = argv[++i];
-    } else if (g_str_equal(argv[i], "--no-keyboard")) {
+    } else if (g_str_equal(argv[i], "--no-keyboard") || g_str_equal(argv[i], "--drag")) {
       keyboard = FALSE;
     } else {
       usage(argv[0]);
@@ -179,7 +263,7 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  App app = { .view = { .hot = WHEEL_HIT_CENTER } };
+  App app = { .view = { .hot = WHEEL_HIT_CENTER }, .drop_hit = WHEEL_HIT_CENTER };
   if (!wheel_demo_model(demo_mode, size, &app.model)) {
     g_printerr("nashi-wheel: unknown mode '%s'\n", demo_mode);
     return 2;
@@ -200,6 +284,15 @@ int main(int argc, char **argv) {
                                   GDK_ENTER_NOTIFY_MASK);
   gtk_widget_add_events(GTK_WIDGET(app.win), GDK_KEY_PRESS_MASK);
   gtk_container_add(GTK_CONTAINER(app.win), app.area);
+
+  app.uri_atom = gdk_atom_intern_static_string("text/uri-list");
+  GtkTargetEntry targets[] = { { (gchar *)"text/uri-list", 0, 0 } };
+  gtk_drag_dest_set(app.area, 0, targets, G_N_ELEMENTS(targets),
+                    GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK);
+  g_signal_connect(app.area, "drag-motion", G_CALLBACK(on_drag_motion), &app);
+  g_signal_connect(app.area, "drag-leave", G_CALLBACK(on_drag_leave), &app);
+  g_signal_connect(app.area, "drag-drop", G_CALLBACK(on_drag_drop), &app);
+  g_signal_connect(app.area, "drag-data-received", G_CALLBACK(on_drag_data), &app);
 
   g_signal_connect(app.area, "draw", G_CALLBACK(on_draw), &app);
   g_signal_connect(app.area, "size-allocate", G_CALLBACK(on_size_allocate), &app);
