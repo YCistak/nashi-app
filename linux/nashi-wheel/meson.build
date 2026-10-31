@@ -12,7 +12,7 @@ wheel_lib = static_library('wheel-core', 'src/draw.c',
 wheel_dep = declare_dependency(link_with : wheel_lib,
   include_directories : include_directories('src'))
 
-executable('nashi-wheel',
+wheel_exe = executable('nashi-wheel',
   ['src/main.c', 'src/surface.c'],
   dependencies : [gtk, layer_shell, m, wheel_dep],
   install : true)
@@ -20,3 +20,12 @@ executable('nashi-wheel',
 geometry_test = executable('test-geometry', 'tests/test_geometry.c',
   dependencies : [gtk, m, wheel_dep])
 test('geometry', geometry_test)
+
+# Headless smoke test: renders every mode to a PNG without any display.
+foreach mode : ['convert', 'tools', 'actions']
+  test('render-' + mode, find_program('sh'),
+    args : ['-c', '"$0" --render-png "$1" --mode ' + mode + ' --highlight 1 --theme dark && test -s "$1"',
+            wheel_exe.full_path(), meson.current_build_dir() / ('smoke-' + mode + '.png')],
+    depends : wheel_exe,
+    env : {'WAYLAND_DISPLAY': '', 'DISPLAY': ''})
+endforeach
