@@ -20,6 +20,8 @@ typedef struct {
   GdkAtom uri_atom;  /* text/uri-list */
   int drop_hit;      /* hit-test result at the drop position */
   guint leave_timer; /* pending "drag ended without a drop" check */
+  gboolean drag_mode; /* --drag: launched by the trigger while a button is held */
+  gboolean armed;     /* --drag: a file drag has reached the surface */
 } App;
 
 static void app_set_hot(App *app, int hot) {
@@ -32,6 +34,14 @@ static void app_set_hot(App *app, int hot) {
 static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
   (void)w;
   App *app = data;
+  if (app->drag_mode && !app->armed) {
+    /* The trigger fires on "button held + modifier", which may be a text
+     * selection or a window resize rather than a file drag. Stay invisible
+     * until a real drag reaches the surface. */
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    return FALSE;
+  }
   wheel_draw(cr, &app->model, &app->view);
   return FALSE;
 }
@@ -128,6 +138,10 @@ static gboolean on_drag_motion(GtkWidget *w, GdkDragContext *ctx, gint x, gint y
     g_source_remove(app->leave_timer);
     app->leave_timer = 0;
   }
+  if (!app->armed) {
+    app->armed = TRUE;
+    gtk_widget_queue_draw(app->area);
+  }
   on_pointer(app, x, y);
   /* Accept everywhere on the surface so that a drop over the centre still
    * arrives and is reported as "cancel" (a refused drop would make the source
@@ -216,6 +230,18 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
   return FALSE;
 }
 
+/* SIGUSR1 from the trigger: the pointer button was released. Without a drag
+ * on the surface this was not a file drag, so leave quietly. During a drag the
+ * drop / leave handlers decide. */
+static gboolean on_button_released(gpointer data) {
+  App *app = data;
+  if (app->drag_mode && !app->armed) {
+    print_line(uris_cancel_json());
+    gtk_main_quit();
+  }
+  return G_SOURCE_CONTINUE;
+}
+
 static gboolean on_signal(gpointer data) {
   (void)data;
   gtk_main_quit();
@@ -236,6 +262,8 @@ static void usage(const char *argv0) {
              "  --no-keyboard   do not take keyboard focus (as while dragging)\n"
              "  --drag          drag-session mode: same as --no-keyboard (the drag source owns\n"
              "                  the keyboard). A text/uri-list drop prints {\"t\":\"drop\",...} or\n"
+             "                  {\"t\":\"cancel\"} and exits. The wheel stays invisible until a\n"
+             "                  drag reaches it; SIGUSR1 (button released) before that prints\n"
              "                  {\"t\":\"cancel\"} and exits.\n"
              "  --at X,Y        open the wheel centred at X,Y (surface coordinates, i.e. relative\n"
              "                  to the output the overlay is on) instead of at the first pointer\n"
@@ -280,7 +308,7 @@ int main(int argc, char **argv) {
   const char *demo_mode = NULL;
   const char *png = NULL, *render_mode = "convert", *highlight = "none", *theme = NULL;
   double size = DEFAULT_SIZE;
-  gboolean keyboard = TRUE;
+  gboolean keyboard = TRUE, drag = FALSE;
   const char *at = NULL;
 
   /* Parse our own flags before GTK sees them. */
@@ -299,8 +327,11 @@ int main(int argc, char **argv) {
       theme = argv[++i];
     } else if (g_str_equal(argv[i], "--at") && i + 1 < argc) {
       at = argv[++i];
-    } else if (g_str_equal(argv[i], "--no-keyboard") || g_str_equal(argv[i], "--drag")) {
+    } else if (g_str_equal(argv[i], "--no-keyboard")) {
       keyboard = FALSE;
+    } else if (g_str_equal(argv[i], "--drag")) {
+      keyboard = FALSE;
+      drag = TRUE;
     } else {
       usage(argv[0]);
       return 2;
@@ -313,7 +344,8 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  App app = { .view = { .hot = WHEEL_HIT_CENTER }, .drop_hit = WHEEL_HIT_CENTER };
+  App app = { .view = { .hot = WHEEL_HIT_CENTER }, .drop_hit = WHEEL_HIT_CENTER,
+              .drag_mode = drag };
   if (at) {
     if (!wheel_parse_point(at, &app.at_x, &app.at_y)) {
       g_printerr("nashi-wheel: --at expects X,Y (non-negative numbers), got '%s'\n", at);
@@ -362,6 +394,7 @@ int main(int argc, char **argv) {
   g_signal_connect(app.win, "delete-event", G_CALLBACK(on_delete), NULL);
   g_unix_signal_add(SIGINT, on_signal, NULL);
   g_unix_signal_add(SIGTERM, on_signal, NULL);
+  g_unix_signal_add(SIGUSR1, on_button_released, &app);
 
   g_message("surface: %s", is_layer ? "layer-shell overlay" : "plain window (fallback)");
   gtk_widget_show_all(GTK_WIDGET(app.win));
